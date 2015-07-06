@@ -20,6 +20,7 @@ package org.apache.spark.scheduler.mesos
 import java.nio.ByteBuffer
 import java.util
 import java.util.Collections
+import scala.collection.JavaConversions._
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -42,6 +43,13 @@ import org.apache.spark.scheduler.cluster.mesos.{MesosSchedulerBackend, MemoryUt
 class MesosSchedulerBackendSuite extends SparkFunSuite with LocalSparkContext with MockitoSugar {
 
   test("check spark-class location correctly") {
+    def createResource(name: String, value: Double): Resource = {
+      Resource.newBuilder()
+        .setName(name)
+        .setScalar(Scalar.newBuilder().setValue(value).build())
+        .setType(Value.Type.SCALAR)
+        .build()
+    }
     val conf = new SparkConf
     conf.set("spark.mesos.executor.home" , "/mesos-home")
 
@@ -62,12 +70,13 @@ class MesosSchedulerBackendSuite extends SparkFunSuite with LocalSparkContext wi
     val mesosSchedulerBackend = new MesosSchedulerBackend(taskScheduler, sc, "master")
 
     // uri is null.
-    val executorInfo = mesosSchedulerBackend.createExecutorInfo("test-id")
+    val resources = List(createResource("cpus", 4), createResource("mem", 1024))
+    val (executorInfo, _) = mesosSchedulerBackend.createExecutorInfo(resources, "test-id")
     assert(executorInfo.getCommand.getValue === s" /mesos-home/bin/spark-class ${classOf[MesosExecutorBackend].getName}")
 
     // uri exists.
     conf.set("spark.executor.uri", "hdfs:///test-app-1.0.0.tgz")
-    val executorInfo1 = mesosSchedulerBackend.createExecutorInfo("test-id")
+    val (executorInfo1, _) = mesosSchedulerBackend.createExecutorInfo(resources, "test-id")
     assert(executorInfo1.getCommand.getValue === s"cd test-app-1*;  ./bin/spark-class ${classOf[MesosExecutorBackend].getName}")
   }
 

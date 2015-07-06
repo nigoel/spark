@@ -22,7 +22,7 @@ import java.util.{List => JList}
 import java.util.Collections
 
 import scala.collection.JavaConversions._
-import scala.collection.mutable.{HashMap, HashSet}
+import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 
 import org.apache.mesos.{Scheduler => MScheduler}
 import org.apache.mesos._
@@ -92,13 +92,11 @@ private[spark] class CoarseMesosSchedulerBackend(
       new Thread("CoarseMesosSchedulerBackend driver") {
         setDaemon(true)
         override def run() {
-          val scheduler = CoarseMesosSchedulerBackend.this
-          val fwInfo = FrameworkInfo.newBuilder().setUser(sc.sparkUser).setName(sc.appName).build()
-          driver = new MesosSchedulerDriver(scheduler, fwInfo, master)
-          try { {
+          driver = MesosSchedulerUtils.createSchedulerDriver(
+            CoarseMesosSchedulerBackend.this, sc.sparkUser, sc.appName, master, sc.conf)
+          try {
             val ret = driver.run()
-            logInfo("driver.run() returned with code " + ret)
-          }
+            logInfo("driver.run() returned with code " + ret)          
           } catch {
             case e: Exception => logError("driver.run() failed", e)
           }
@@ -211,8 +209,8 @@ private[spark] class CoarseMesosSchedulerBackend(
 
       for (offer <- offers) {
         val slaveId = offer.getSlaveId.toString
-        val mem = getResource(offer.getResourcesList, "mem")
-        val cpus = getResource(offer.getResourcesList, "cpus").toInt
+        val mem = MesosSchedulerUtils.getResource(offer.getResourcesList, "mem")
+        val cpus = MesosSchedulerUtils.getResource(offer.getResourcesList, "cpus").toInt
         if (totalCoresAcquired < maxCores &&
             mem >= MemoryUtils.calculateTotalMemory(sc) &&
             cpus >= 1 &&
@@ -225,43 +223,30 @@ private[spark] class CoarseMesosSchedulerBackend(
           taskIdToSlaveId(taskId) = slaveId
           slaveIdsWithExecutors += slaveId
           coresByTaskId(taskId) = cpusToUse
-          val task = MesosTaskInfo.newBuilder()
+          // Gather cpu resources from the available resources and use them in the task.
+          val (remainingResources, taskResources) =
+             MesosSchedulerUtils.partitionResources(offer.getResourcesList, "cpus", cpusToUse)
+          val taskBuilder = MesosTaskInfo.newBuilder()
             .setTaskId(TaskID.newBuilder().setValue(taskId.toString).build())
             .setSlaveId(offer.getSlaveId)
             .setCommand(createCommand(offer, cpusToUse + extraCoresPerSlave))
             .setName("Task " + taskId)
-            .addResources(createResource("cpus", cpusToUse))
-            .addResources(createResource("mem",
-              MemoryUtils.calculateTotalMemory(sc)))
-            .build()
+            .addAllResources(taskResources)
+            .addAllResources(
+              MesosSchedulerUtils.partitionResources(
+                remainingResources, "mem", MemoryUtils.calculateTotalMemory(sc))._2)
           d.launchTasks(
-            Collections.singleton(offer.getId),  Collections.singletonList(task), filters)
+            Collections.singleton(offer.getId),
+            Collections.singletonList(taskBuilder.build),
+            filters)
         } else {
-          // Filter it out
-          d.launchTasks(
-            Collections.singleton(offer.getId), Collections.emptyList[MesosTaskInfo](), filters)
+          logTrace(s"Offer declined: ${offer.getId}")
+          d.declineOffer(offer.getId, filters)
         }
       }
     }
   }
-
-  /** Helper function to pull out a resource from a Mesos Resources protobuf */
-  private def getResource(res: JList[Resource], name: String): Double = {
-    for (r <- res if r.getName == name) {
-      return r.getScalar.getValue
-    }
-    0
-  }
-
-  /** Build a Mesos resource protobuf object */
-  private def createResource(resourceName: String, quantity: Double): Protos.Resource = {
-    Resource.newBuilder()
-      .setName(resourceName)
-      .setType(Value.Type.SCALAR)
-      .setScalar(Value.Scalar.newBuilder().setValue(quantity).build())
-      .build()
-  }
-
+  
   override def statusUpdate(d: SchedulerDriver, status: TaskStatus) {
     val taskId = status.getTaskId.getValue.toInt
     val state = status.getState

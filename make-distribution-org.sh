@@ -38,8 +38,7 @@ TACHYON_URL="https://github.com/amplab/tachyon/releases/download/v${TACHYON_VERS
 
 MAKE_TGZ=false
 NAME=none
-MVN=mvn 
-#"$SPARK_HOME/build/mvn"
+MVN="$SPARK_HOME/build/mvn"
 
 function exit_with_usage {
   echo "make-distribution.sh - tool for making binary distributions of Spark"
@@ -95,7 +94,7 @@ while (( "$#" )); do
   esac
   shift
 done
-echo $JAVA_HOME
+
 if [ -z "$JAVA_HOME" ]; then
   # Fall back on JAVA_HOME from rpm, if found
   if [ $(command -v  rpm) ]; then
@@ -128,22 +127,16 @@ if [ ! $(command -v "$MVN") ] ; then
 fi
 
 VERSION=$("$MVN" help:evaluate -Dexpression=project.version 2>/dev/null | grep -v "INFO" | tail -n 1)
-
-SCALA_VERSION=$("$MVN" help:evaluate -Dexpression=scala.binary.version $@ 2>/dev/null\
-    | grep -v "INFO"\
-    | tail -n 1)
-#echo $SCALA_VERSION
 SPARK_HADOOP_VERSION=$("$MVN" help:evaluate -Dexpression=hadoop.version $@ 2>/dev/null\
     | grep -v "INFO"\
     | tail -n 1)
-#echo $SPARK_HADOOP_VERSION
 SPARK_HIVE=$("$MVN" help:evaluate -Dexpression=project.activeProfiles -pl sql/hive $@ 2>/dev/null\
     | grep -v "INFO"\
     | fgrep --count "<id>hive</id>";\
     # Reset exit status to 0, otherwise the script stops here if the last grep finds nothing\
     # because we use "set -o pipefail"
     echo -n)
-#echo $VERSION
+
 JAVA_CMD="$JAVA_HOME"/bin/java
 JAVA_VERSION=$("$JAVA_CMD" -version 2>&1)
 if [[ ! "$JAVA_VERSION" =~ "1.6" && -z "$SKIP_JAVA_TEST" ]]; then
@@ -159,7 +152,7 @@ if [[ ! "$JAVA_VERSION" =~ "1.6" && -z "$SKIP_JAVA_TEST" ]]; then
     exit 1
   fi
 fi
-echo $NAME
+
 if [ "$NAME" == "none" ]; then
   NAME=$SPARK_HADOOP_VERSION
 fi
@@ -186,13 +179,13 @@ export MAVEN_OPTS="-Xmx2g -XX:MaxPermSize=512M -XX:ReservedCodeCacheSize=512m"
 # Store the command as an array because $MVN variable might have spaces in it.
 # Normal quoting tricks don't work.
 # See: http://mywiki.wooledge.org/BashFAQ/050
-BUILD_COMMAND=("$MVN"  package -DskipTests $@)
+BUILD_COMMAND=("$MVN" clean package -DskipTests $@)
 
 # Actually build the jar
 echo -e "\nBuilding with..."
 echo -e "\$ ${BUILD_COMMAND[@]}\n"
 
-#"${BUILD_COMMAND[@]}"
+"${BUILD_COMMAND[@]}"
 
 # Make directories
 rm -rf "$DISTDIR"
